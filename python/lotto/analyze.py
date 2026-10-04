@@ -9,7 +9,7 @@ from datetime import datetime
 from itertools import permutations
 from math import comb
 
-from . import methods
+from . import engine, methods
 
 NAMES = {"magnum": "Magnum 4D", "damacai": "Da Ma Cai 1+3D", "toto": "Sports Toto 4D"}
 JACKPOT_NAMES = {"magnum": "Magnum 4D Jackpot", "damacai": "Da Ma Cai 1+3D Jackpot",
@@ -103,6 +103,7 @@ def analyze_4d(draws: dict):
         "digit_pick": {"num": digit_pick, "odds": odds_4d(digit_pick)},
         "digit_freq": [{str(k): v for k, v in sorted(c.items())} for c in pos],
         "methods": methods.compute(dates, draws, total, recent, last_seen) if dates else {},
+        "v2": engine.run(dates, draws, seed=len(dates)) if len(dates) > engine.TEST_START else None,
         "jackpot": {"pair": jp, "p": JACKPOT_PAIR_P, "one_in": _one_in(JACKPOT_PAIR_P)},
         "backtest": {
             "draws": bt_n,
@@ -153,11 +154,18 @@ def analyze_lotto(draws: dict, key: str, n_balls: int):
 
 def build(db: dict):
     out = {"updated": datetime.now().isoformat(timespec="minutes"), "companies": {}, "lotto": {},
-           "methods": [{"id": i, "name": n, "desc": d} for i, n, d in methods.METHODS]}
+           "methods": [{"id": "v2", "name": "V2 综合评分",
+                        "desc": "Prediction Engine V2：长短期频率、位置、数字对、遗漏值、模式、机器学习加权综合，"
+                                "并过滤极端组合。回测结果见各公司页面。"}]
+                      + [{"id": i, "name": n, "desc": d} for i, n, d in methods.METHODS]}
     for c, name in NAMES.items():
         r = analyze_4d(db.get(c, {}))
         r["name"] = name
         r["jackpot"]["name"] = JACKPOT_NAMES[c]
+        if r.get("v2"):
+            r["jackpot"]["pair"] = [p["num"] for p in r["v2"]["picks"][:2]]
+            r["methods"]["v2"] = [{"num": p["num"], "why": f"综合评分 {p['score']}（平均号码为 50）"}
+                                  for p in r["v2"]["top3"]]
         out["companies"][c] = r
     for key, (name, n) in LOTTO.items():
         r = analyze_lotto(db.get("toto", {}), key, n)

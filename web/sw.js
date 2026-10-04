@@ -1,5 +1,5 @@
 // 离线缓存：界面文件先用缓存，data.json 先抓网络（失败才用缓存）
-const CACHE = "lotto4d-v2";
+const CACHE = "lotto4d-v3";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {

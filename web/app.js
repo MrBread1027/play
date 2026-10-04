@@ -27,40 +27,79 @@ function odds4d(n) {
 
 // ------------------------------------------------------------ 4D 公司
 function renderCompany(c) {
-  const bt = c.backtest;
-  const picks = c.picks.map((p, i) => `
-    <div class="pick">
-      <div class="num">${esc(p.num)}</div>
-      <div class="stats"><span class="rank">#${i + 1}</span>
-        三年出现 <b>${p.count}</b> 次 · 近半年 ${p.recent} 次 · 最后 ${esc(p.last_seen)}</div>
-      <div class="odds">头奖 <b>${pct(p.odds.first)}</b> · 任何奖 <b>${pct(p.odds.any)}</b><br>
-        iBox(${p.odds.perms}组) 任何奖 <b>${pct(p.odds.ibox_any)}</b></div>
-    </div>`).join("");
+  const v = c.v2;
+  if (!v) return `<section class="card err">资料不足，至少需要 150 期才能计算 V2。</section>`;
+  const L = v.labels;
+  const maxPart = Math.max(...v.picks.flatMap((p) => Object.values(p.parts).map(Math.abs)), 0.01);
 
+  const picks = v.picks.map((p, i) => {
+    const o = odds4d(p.num);
+    const bars = Object.entries(p.parts).map(([k, x]) => `
+      <div class="bar"><span>${esc(L[k])}</span>
+        <i><b class="${x < 0 ? "neg" : ""}" style="width:${(Math.abs(x) / maxPart) * 100}%"></b></i>
+        <em>${x > 0 ? "+" : ""}${x.toFixed(2)}</em></div>`).join("");
+    return `
+    <div class="pick v2">
+      <div class="num">${esc(p.num)}</div>
+      <div>
+        <div class="score"><span class="rank">#${i + 1}</span> 评分 <b>${p.score.toFixed(1)}</b>
+          <span class="sub">（平均号码 = 50）</span></div>
+        <div class="odds">三年出现 ${p.count} 次 · 近半年 ${p.recent} 次 · 模式 ${esc(p.pattern)}</div>
+        <div class="odds">任何奖 <b>${pct(o.any)}</b> · iBox(${o.perms}组) <b>${pct(o.ibox_any)}</b></div>
+      </div>
+      <details><summary>评分组成</summary>${bars}</details>
+    </div>`;
+  }).join("");
+
+  const bt = v.backtest;
+  const rows = bt.rows.map((r) => `
+    <tr><td>Top ${r.k}</td>
+      <td>${r.hits} <span class="sub">/ ${r.expected}</span></td>
+      <td>${(r.rate * 100).toFixed(2)}%</td>
+      <td>${r.first} <span class="sub">/ ${r.first_expected}</span></td>
+      <td class="${r.p_value < 0.05 ? "sig" : ""}">${r.p_value.toFixed(2)}</td></tr>`).join("");
+  const cal = bt.calibrated;
+  const anySig = bt.rows.some((r) => r.p_value < 0.05);
+  const w = v.weights;
   const last = c.last_result ? c.last_result.top3.map((n) => `<span class="ball lg">${esc(n)}</span>`).join("") : "";
 
   return `
-  <section class="card">
-    <h2>${esc(c.name)} 推荐号码</h2>
-    <p class="sub">根据 ${c.draws} 期资料（${esc(c.first_draw)} 至 ${esc(c.last_draw)}），按三年出现次数 + 近半年加权排名</p>
+  <section class="card hero">
+    <h2>${esc(c.name)} · V2 推荐</h2>
+    <p class="sub">综合评分引擎，分析 ${c.draws} 期（${esc(c.first_draw)} 至 ${esc(c.last_draw)}），
+      已过滤 ${(10000 - v.filters.kept).toLocaleString()} 个极端组合</p>
     ${picks}
   </section>
+
   <section class="card">
-    <h2>位数频率组合</h2>
-    <p class="sub">千、百、十、个位各自最常出现的数字</p>
-    <div class="balls"><span class="ball lg">${esc(c.digit_pick.num)}</span></div>
-    <div class="odds">任何奖 <b>${pct(c.digit_pick.odds.any)}</b></div>
+    <h2>Walk-forward 回测</h2>
+    <p class="sub">从 ${esc(bt.test_from)} 起共 ${bt.draws} 期：每期只用当时之前的资料打分，再对照当期结果。
+      斜线后是纯随机的期望值。</p>
+    <table class="bt-table">
+      <thead><tr><th></th><th>中奖数</th><th>命中率</th><th>头奖</th><th>p 值</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="bt">
+      <b>校准后的真实概率：</b>推荐前 4 个号码中任何奖的实际命中率
+      ${(cal.rate * 100).toFixed(2)}%（95% 区间 ${(cal.lo * 100).toFixed(2)}%–${(cal.hi * 100).toFixed(2)}%），
+      随机为 ${(cal.random * 100).toFixed(2)}%。<br>
+      ${anySig ? "有一项 p 值低于 0.05，但同时检验多项时偶尔出现属于正常，需要更多期数确认。"
+               : "所有 p 值都高于 0.05：模型没有显著优于随机选号。"}
+    </div>
   </section>
+
+  <section class="card">
+    <h2>模型设定</h2>
+    <div class="kv">${Object.keys(w).map((k) => `<span>${esc(L[k])}</span><span>${Math.round(w[k] * 100)}%</span>`).join("")}</div>
+    <p class="sub" style="margin-top:10px">机器学习学到的特征权重：
+      ${Object.entries(v.ml_weights).map(([k, x]) => `${esc(L[k])} ${x > 0 ? "+" : ""}${x}`).join(" · ")}</p>
+    <p class="sub">过滤规则：数字和在 ${v.filters.sum_lo}–${v.filters.sum_hi} 以外、AAAA、全奇/全偶且全大/全小。</p>
+  </section>
+
   <section class="card">
     <h2>上期头三奖</h2>
     <p class="sub">${esc(c.last_draw)}</p>
     <div class="balls">${last}</div>
-  </section>
-  <section class="card">
-    <h2>历史回测：推荐号码真的比较准吗？</h2>
-    <div class="bt">最近 ${bt.draws} 期，每期用当时的资料选出前 ${bt.picks_per_draw} 个推荐号：<br>
-      推荐号命中率 <b>${(bt.hit_rate * 100).toFixed(2)}%</b>，随便买的命中率是 <b>${(bt.random_rate * 100).toFixed(2)}%</b>。<br>
-      两者接近，说明历史频率没有预测能力。</div>
   </section>`;
 }
 
@@ -100,7 +139,7 @@ function renderCheck() {
     if (n.length < 4) { $("#check-out").innerHTML = ""; return; }
     const o = odds4d(n);
     const found = Object.values(DATA ? DATA.companies : {})
-      .filter((c) => c.picks.some((p) => p.num === n)).map((c) => c.name);
+      .filter((c) => c.v2 && c.v2.picks.some((p) => p.num === n)).map((c) => c.name);
     $("#check-out").innerHTML = `
       <div class="kv">
         <span>头奖 (Big)</span><span>${pct(o.first)}</span>
