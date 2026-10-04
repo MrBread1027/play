@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>4D 号码分析</title>
+<meta name="theme-color" content="#8b1a1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="4D 分析">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-512.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="title">
+    <h1>4D 号码分析</h1>
+    <p id="updated">载入中…</p>
+  </div>
+  <button id="refresh" aria-label="刷新资料">⟳</button>
+</header>
+
+<nav id="tabs">
+  <button data-tab="magnum" class="on">Magnum</button>
+  <button data-tab="damacai">Da Ma Cai</button>
+  <button data-tab="toto">Toto</button>
+  <button data-tab="calc">计算</button>
+  <button data-tab="jackpot">Jackpot</button>
+  <button data-tab="check">查号码</button>
+</nav>
+
+<main id="view"></main>
+
+<footer>
+  每期开奖都是独立随机的。推荐号码只是过去三年出现较多的号码，
+  真实中奖概率由游戏规则决定，不会因为历史资料而提高。请理性投注。
+</footer>
+
+<template id="check-tpl">
+  <section class="card">
+    <h2>查任何号码的真实中奖概率</h2>
+    <input id="num" inputmode="numeric" maxlength="4" placeholder="输入 4 位号码，如 1234">
+    <div id="check-out"></div>
+  </section>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>

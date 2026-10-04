@@ -1,0 +1,47 @@
+# 每天马来西亚时间晚上 9 点自动抓新开奖、重新计算，并发布网页 App 到 GitHub Pages
+name: update-and-deploy
+
+on:
+  schedule:
+    - cron: "0 13 * * *"   # 13:00 UTC = 21:00 MYT
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 更新资料
+        env:
+          TZ: Asia/Kuala_Lumpur
+        run: python python/app.py update
+      - name: 保存资料
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add data/draws.json web/data.json
+          git diff --cached --quiet || git commit -m "自动更新开奖资料"
+          git push
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deploy
+        uses: actions/deploy-pages@v4
