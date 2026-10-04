@@ -24,8 +24,10 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+        with:
+          ref: main   # 重新执行旧的 run 时也从最新版本开始
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: 更新资料
@@ -33,6 +35,7 @@ jobs:
           TZ: Asia/Kuala_Lumpur
         run: python python/app.py update
       - name: 保存资料
+        continue-on-error: true   # 保存失败也继续发布 App
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
