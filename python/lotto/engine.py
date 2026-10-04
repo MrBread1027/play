@@ -179,6 +179,7 @@ def run(dates, draws, seed=0, top=4):
     bt = {K: {"hits": 0, "first": 0, "draws_hit": 0} for K in KS}
     T = 0
     distinct = 0
+    prev = None   # 最新一期开奖前 V2 推荐的号码，用来对奖
 
     for t, d in enumerate(dates):
         r = draws[d]
@@ -198,6 +199,8 @@ def run(dates, draws, seed=0, top=4):
                     bt[K]["first"] += first in best[:K]
                 T += 1
                 distinct += len(win)
+                if t == len(dates) - 1:
+                    prev = {"date": d, "picks": [NUMS[i] for i in best[:top]]}
             ml.train(X, win, rng)
         st.add(idxs)
 
@@ -243,6 +246,7 @@ def run(dates, draws, seed=0, top=4):
     return {
         "picks": picks[:top],
         "top3": picks[:3],
+        "last_check": prev,
         "backtest": {"draws": T, "train_from": dates[0] if dates else None,
                      "test_from": dates[TEST_START] if len(dates) > TEST_START else None,
                      "rows": rows,

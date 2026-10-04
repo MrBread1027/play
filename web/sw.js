@@ -1,5 +1,5 @@
 // 离线缓存：界面文件先用缓存，data.json 先抓网络（失败才用缓存）
-const CACHE = "lotto4d-v3";
+const CACHE = "lotto4d-v4";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon-180.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -14,13 +14,14 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  if (url.pathname.endsWith("data.json")) {
+  const name = url.pathname.split("/").pop();
+  if (name === "data.json" || name === "live.json") {
     e.respondWith(
       fetch(e.request).then((r) => {
         const copy = r.clone();
-        caches.open(CACHE).then((c) => c.put("data.json", copy));
+        caches.open(CACHE).then((c) => c.put(name, copy));
         return r;
-      }).catch(() => caches.match("data.json"))
+      }).catch(() => caches.match(name))
     );
     return;
   }

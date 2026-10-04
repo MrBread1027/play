@@ -2,7 +2,8 @@
 
 const $ = (s) => document.querySelector(s);
 let DATA = null;
-let tab = "magnum";
+let tab = "results";
+let LIVE = null;
 try { tab = localStorage.getItem("tab") || tab; } catch (e) {}
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -152,12 +153,75 @@ function renderCheck() {
   input.focus();
 }
 
+// ------------------------------------------------------------ 最新成绩
+function prizeOf(num, d) {
+  const names = ["头奖", "二奖", "三奖"];
+  const i = (d.top3 || []).indexOf(num);
+  if (i >= 0) return names[i];
+  if ((d.special || []).includes(num)) return "特别奖";
+  if ((d.consolation || []).includes(num)) return "安慰奖";
+  const key = [...num].sort().join("");
+  const all = [...(d.top3 || []), ...(d.special || []), ...(d.consolation || [])];
+  const box = all.find((n) => [...n].sort().join("") === key);
+  return box ? `iBox 中（${box}）` : null;
+}
+
+function renderResults() {
+  const live = (LIVE && LIVE.companies) || {};
+  const cards = Object.entries(DATA.companies).map(([key, c]) => {
+    const v2 = c.v2 || {};
+    const lv = live[key];
+    let res, picks;
+    if (lv && lv.date > (c.last_draw || "")) {          // 新的一期（可能还在开奖中）
+      res = lv;
+      picks = (v2.picks || []).map((p) => p.num);
+    } else {
+      res = c.last_result || {};
+      picks = (v2.last_check && v2.last_check.picks) || [];
+    }
+    const date = res.date || c.last_draw;
+    const drawNo = lv && lv.date === date ? ` · 第 ${esc(lv.draw_no)} 期` : "";
+    const liveNow = lv && lv.live && res === lv;
+    const mine = new Set(picks);
+    const grid = (arr) => `<div class="grid5">${(arr || []).map((n) =>
+      `<span class="${mine.has(n) ? "hit" : ""}">${esc(n)}</span>`).join("")}</div>`;
+    const top = ["头奖", "二奖", "三奖"].map((name, i) => `
+      <div class="prize"><small>${name}</small><b class="${mine.has((res.top3 || [])[i]) ? "hit" : ""}">${esc((res.top3 || [])[i] || "····")}</b></div>`).join("");
+    const check = picks.map((n) => {
+      const p = prizeOf(n, res);
+      return `<div class="check ${p ? "won" : ""}"><span>${esc(n)}</span><em>${p ? esc(p) : liveNow ? "等待中" : "没中"}</em></div>`;
+    }).join("");
+    return `
+    <section class="card result">
+      <div class="r-head"><h2>${esc(c.name)}</h2>
+        ${liveNow ? `<span class="live-dot">开奖中</span>` : ""}</div>
+      <p class="sub">${esc(date)}${drawNo}</p>
+      <div class="prizes">${top}</div>
+      <p class="label">特别奖</p>${grid(res.special)}
+      <p class="label">安慰奖</p>${grid(res.consolation)}
+      <p class="label gold">开奖前 V2 推荐对奖</p>
+      ${check || `<p class="sub">（等下一期开奖后显示）</p>`}
+    </section>`;
+  }).join("");
+
+  const lotto = Object.values(DATA.lotto).map((t) => `
+    <div class="kv"><span>${esc(t.name)} <small class="sub">${esc(t.last_draw || "")}</small></span><span></span></div>
+    <div class="balls">${(t.last_result || []).map((b) => `<span class="ball">${b}</span>`).join("")}</div>`).join("");
+
+  const checked = LIVE && LIVE.checked ? `成绩检查于 ${esc(LIVE.checked.replace("T", " "))}` : "";
+  $("#view").innerHTML = `
+    <p class="sub center">${checked} · 开奖时间（晚上 7-9 点）约每 10 分钟更新</p>
+    ${cards}
+    <section class="card"><h2>Sports Toto Jackpot</h2>${lotto}</section>`;
+}
+
 // ------------------------------------------------------------ 主流程
 function render() {
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   if (tab === "check") return renderCheck();
   if (!DATA) { $("#view").innerHTML = `<section class="card err">还没有资料。请先在电脑执行 <code>python app.py update</code>。</section>`; return; }
   if (tab === "calc") return renderCalc();
+  if (tab === "results") return renderResults();
   $("#view").innerHTML = tab === "jackpot" ? renderJackpot() : renderCompany(DATA.companies[tab]);
 }
 
@@ -212,19 +276,31 @@ function renderCalc() {
   });
 }
 
-async function load() {
-  $("#refresh").classList.add("spin");
+async function getJSON(name) {
+  const r = await fetch(name + "?t=" + Date.now(), { cache: "no-store" });
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+async function load(quiet) {
+  if (!quiet) $("#refresh").classList.add("spin");
+  const before = JSON.stringify([DATA && DATA.updated, LIVE && LIVE.companies]);
   try {
-    const r = await fetch("data.json?t=" + Date.now(), { cache: "no-store" });
-    if (!r.ok) throw new Error(r.status);
-    DATA = await r.json();
+    DATA = await getJSON("data.json");
     $("#updated").textContent = "资料更新: " + DATA.updated.replace("T", " ");
   } catch (e) {
     $("#updated").textContent = DATA ? "离线中，显示上次资料" : "无法载入资料";
   }
+  try { LIVE = await getJSON("live.json"); } catch (e) {}
   $("#refresh").classList.remove("spin");
-  render();
+  const changed = before !== JSON.stringify([DATA && DATA.updated, LIVE && LIVE.companies]);
+  // 自动刷新时只在成绩页重画，避免打断其他页面的操作
+  if (!quiet || (changed && tab === "results")) render();
 }
+
+// 打开 App 时每分钟检查一次新成绩
+setInterval(() => { if (document.visibilityState === "visible") load(true); }, 60000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") load(true); });
 
 $("#tabs").addEventListener("click", (e) => {
   const b = e.target.closest("button");
@@ -234,7 +310,7 @@ $("#tabs").addEventListener("click", (e) => {
   render();
   window.scrollTo(0, 0);
 });
-$("#refresh").addEventListener("click", load);
+$("#refresh").addEventListener("click", () => load());
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 load();

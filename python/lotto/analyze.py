@@ -152,6 +152,23 @@ def analyze_lotto(draws: dict, key: str, n_balls: int):
     }
 
 
+def prize_of(num, draw):
+    """号码在这一期中了什么奖（直买 / iBox）。"""
+    names = ["头奖", "二奖", "三奖"]
+    for i, n in enumerate(draw.get("top3", [])):
+        if n == num:
+            return {"prize": names[i], "ibox": None}
+    if num in draw.get("special", []):
+        return {"prize": "特别奖", "ibox": None}
+    if num in draw.get("consolation", []):
+        return {"prize": "安慰奖", "ibox": None}
+    key = sorted(num)
+    for n in _numbers(draw):
+        if sorted(n) == key:
+            return {"prize": None, "ibox": n}
+    return {"prize": None, "ibox": None}
+
+
 def build(db: dict):
     out = {"updated": datetime.now().isoformat(timespec="minutes"), "companies": {}, "lotto": {},
            "methods": [{"id": "v2", "name": "V2 综合评分",
@@ -163,6 +180,9 @@ def build(db: dict):
         r["name"] = name
         r["jackpot"]["name"] = JACKPOT_NAMES[c]
         if r.get("v2"):
+            lc = r["v2"].get("last_check")
+            if lc and lc["date"] == r["last_draw"]:
+                lc["result"] = [{"num": n, **prize_of(n, r["last_result"])} for n in lc["picks"]]
             r["jackpot"]["pair"] = [p["num"] for p in r["v2"]["picks"][:2]]
             r["methods"]["v2"] = [{"num": p["num"], "why": f"综合评分 {p['score']}（平均号码为 50）"}
                                   for p in r["v2"]["top3"]]

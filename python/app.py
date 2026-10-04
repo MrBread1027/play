@@ -2,13 +2,16 @@
 
 用法:
   python app.py            打开电脑版界面
-  python app.py update     更新资料并重新计算（无界面，给自动排程用）
+  python app.py update     更新资料，有新开奖才重新计算（无界面，给自动排程用）
+  python app.py update --force   不管有没有新开奖都重新计算
   python app.py serve      在本机开网页版 (手机同一 WiFi 可访问)
 """
 import json
+import os
 import socket
 import sys
 import threading
+from datetime import datetime
 from pathlib import Path
 
 from lotto import analyze, fetch
@@ -16,6 +19,7 @@ from lotto import analyze, fetch
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "data" / "draws.json"
 OUT_PATH = ROOT / "web" / "data.json"
+LIVE_PATH = ROOT / "web" / "live.json"
 
 DISCLAIMER = ("提醒：每期开奖都是独立随机的。推荐号码只是过去三年出现较多的号码，"
               "真实中奖概率由游戏规则决定，不会因为历史资料而提高。请理性投注。")
@@ -31,12 +35,28 @@ def save(db, result):
     OUT_PATH.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")), "utf-8")
 
 
-def run_update(progress=None):
+def run_update(progress=None, force=False):
+    """有新开奖才重新计算（V2 引擎约需 1 分钟）。没有新资料时 result 为 None。"""
     db = load_db()
     added = fetch.update(db, progress=progress)
+    if not added and not force and OUT_PATH.exists():
+        return 0, None
     result = analyze.build(db)
     save(db, result)
     return added, result
+
+
+def save_live():
+    """抓最新一期（含开奖中）的成绩存成 live.json，内容有变化时返回 True。"""
+    try:
+        live = fetch.fetch_live()
+    except Exception:
+        return False, None
+    old = json.loads(LIVE_PATH.read_text("utf-8")) if LIVE_PATH.exists() else {}
+    changed = old.get("companies") != live
+    out = {"checked": datetime.now().isoformat(timespec="minutes"), "companies": live}
+    LIVE_PATH.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")), "utf-8")
+    return changed, out
 
 
 def load_result():
@@ -60,10 +80,18 @@ def cli_update():
         if i % 50 == 0 or i == n:
             print(f"  {i}/{n}", flush=True)
     print("正在更新资料 ...")
-    added, r = run_update(prog)
-    print(f"新增 {added} 期。")
+    live_changed, _ = save_live()
+    added, r = run_update(prog, force="--force" in sys.argv)
+    print(f"新增 {added} 期。实时成绩{'有' if live_changed else '没有'}变化。")
+    if os.environ.get("GITHUB_OUTPUT"):   # 告诉 GitHub Actions 要不要发布
+        with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write("changed=true\n" if r or live_changed else "changed=false\n")
+    if not r:
+        print("没有新开奖，不用重新计算。")
+        return
     for c in r["companies"].values():
-        print(f"{c['name']:<16} {c['draws']} 期, 推荐: {' '.join(p['num'] for p in c['picks'][:5])}")
+        if c.get("v2"):
+            print(f"{c['name']:<16} {c['draws']} 期, V2 推荐: {' '.join(p['num'] for p in c['v2']['picks'])}")
     for t in r["lotto"].values():
         print(f"{t['name']:<16} {t['draws']} 期, 推荐: {t['hot_pick']}")
 
@@ -130,12 +158,18 @@ def gui():
     style.configure("Horizontal.TProgressbar", troughcolor=CARD, background=GOLD, bordercolor=LINE)
     style.configure("TLabelframe", background=BG, bordercolor=GOLD)
     style.configure("TLabelframe.Label", background=BG, foreground=GOLD2, font=(FONT, 11, "bold"))
+    style.configure("TCheckbutton", background=BG, foreground=INK, indicatorbackground=CARD,
+                    indicatorforeground=GOLD2)
+    style.map("TCheckbutton", background=[("active", BG)], indicatorbackground=[("selected", GOLD)])
 
     top = ttk.Frame(root, padding=8)
     top.pack(fill="x")
     ttk.Label(top, text="4D 号码分析 V2", style="Title.TLabel").pack(side="left", padx=(0, 16))
     btn = ttk.Button(top, text="更新资料")
     btn.pack(side="left")
+    auto = tk.BooleanVar(value=True)
+    ttk.Checkbutton(top, text="开奖时间自动更新（每晚 7-9 点，每分钟看实时成绩）",
+                    variable=auto).pack(side="left", padx=(12, 0))
     status = ttk.Label(top, text="")
     status.pack(side="left", padx=12)
     bar = ttk.Progressbar(top, length=220)
@@ -146,13 +180,17 @@ def gui():
     ttk.Label(root, text=DISCLAIMER, foreground="#f0b47a", wraplength=1000,
               padding=8).pack(fill="x")
 
+    state = {"r": None, "live": None}
+
     def render(r):
+        state["r"] = r
         for t in nb.tabs():
             nb.forget(t)
         if not r:
             status.config(text="还没有资料，请按「更新资料」（第一次约需 5-10 分钟）")
             return
         status.config(text=f"最后更新: {r['updated'].replace('T', ' ')}")
+        render_results(r)
         render_calc(r)
         for c in r["companies"].values():
             f = ttk.Frame(nb, padding=12)
@@ -223,6 +261,73 @@ def gui():
                                 f"回测: 热号平均每期中 {bt['avg_match']:.2f} 个，"
                                 f"纯随机应为 {bt['random_match']:.2f} 个").pack(anchor="w")
 
+    def render_results(r):
+        f = tk.Frame(nb, bg=BG, padx=10, pady=10)
+        nb.add(f, text="最新成绩")
+        companies = (state["live"] or {}).get("companies", {})
+        for col, (key, c) in enumerate(r["companies"].items()):
+            f.grid_columnconfigure(col, weight=1, uniform="c")
+            box = tk.Frame(f, bg=CARD, highlightbackground=LINE, highlightthickness=1, padx=10, pady=8)
+            box.grid(row=0, column=col, sticky="nsew", padx=5)
+            v2 = c.get("v2") or {}
+            lv = companies.get(key)
+            if lv and lv["date"] > (c["last_draw"] or ""):
+                # 新的一期（可能还在开奖中）：拿开奖前的 V2 推荐来对奖
+                res = lv
+                picks = [p["num"] for p in v2.get("picks", [])]
+                lc = {"picks": picks, "result": [{"num": n, **analyze.prize_of(n, lv)} for n in picks]}
+            else:
+                res = c.get("last_result") or {}
+                lc = v2.get("last_check") or {}
+            mine = set(lc.get("picks", []))
+            draw_no = f" 第 {lv['draw_no']} 期" if lv and lv["date"] == (res.get("date") or c["last_draw"]) else ""
+            live_now = bool(lv and lv["live"] and res is lv)
+            tk.Label(box, text=c["name"], bg=CARD, fg=GOLD2, font=(FONT, 12, "bold")).pack(anchor="w")
+            tk.Label(box, text=f"{res.get('date') or c['last_draw']}{draw_no}" + ("   ● 开奖中" if live_now else ""),
+                     bg=CARD, fg="#ff8a8a" if live_now else MUTED, font=(FONT, 9)).pack(anchor="w")
+
+            row = tk.Frame(box, bg=CARD)
+            row.pack(fill="x", pady=(6, 4))
+            for i, (name, n) in enumerate(zip(("头奖", "二奖", "三奖"), res.get("top3", []))):
+                cell = tk.Frame(row, bg=CARD)
+                cell.grid(row=0, column=i, padx=3, sticky="ew")
+                row.grid_columnconfigure(i, weight=1)
+                tk.Label(cell, text=name, bg=CARD, fg=MUTED, font=(FONT, 9)).pack()
+                tk.Label(cell, text=n, bg=GOLD, fg=DARK, font=("Consolas", 17, "bold"),
+                         padx=6, pady=2).pack(fill="x")
+
+            for title, key in (("特别奖", "special"), ("安慰奖", "consolation")):
+                tk.Label(box, text=title, bg=CARD, fg=MUTED, font=(FONT, 9)).pack(anchor="w", pady=(6, 0))
+                grid = tk.Frame(box, bg=CARD)
+                grid.pack(fill="x")
+                for i, n in enumerate(res.get(key, [])):
+                    hit = n in mine
+                    tk.Label(grid, text=n, bg=GOLD if hit else BG, fg=DARK if hit else INK,
+                             font=("Consolas", 11, "bold" if hit else "normal"), width=5,
+                             pady=1).grid(row=i // 5, column=i % 5, padx=2, pady=2)
+
+            tk.Label(box, text="开奖前 V2 推荐对奖", bg=CARD, fg=GOLD2,
+                     font=(FONT, 10, "bold")).pack(anchor="w", pady=(10, 2))
+            if lc.get("result"):
+                for x in lc["result"]:
+                    msg = x["prize"] or (f"iBox 中（{x['ibox']}）" if x["ibox"] else "没中")
+                    color = GOLD2 if x["prize"] or x["ibox"] else MUTED
+                    tk.Label(box, text=f"{x['num']}   {msg}", bg=CARD, fg=color,
+                             font=("Consolas", 11)).pack(anchor="w")
+            else:
+                tk.Label(box, text="（等下一期开奖后显示）", bg=CARD, fg=MUTED).pack(anchor="w")
+
+        lotto = tk.Frame(f, bg=CARD, highlightbackground=LINE, highlightthickness=1, padx=10, pady=8)
+        lotto.grid(row=1, column=0, columnspan=3, sticky="ew", padx=5, pady=(10, 0))
+        tk.Label(lotto, text="Sports Toto Jackpot", bg=CARD, fg=GOLD2,
+                 font=(FONT, 12, "bold")).grid(row=0, column=0, sticky="w", columnspan=8)
+        for i, t in enumerate(r["lotto"].values()):
+            tk.Label(lotto, text=f"{t['name']}  ({t['last_draw']})", bg=CARD, fg=INK, font=(FONT, 10),
+                     width=30, anchor="w").grid(row=i + 1, column=0, sticky="w", pady=2)
+            for j, b in enumerate(t.get("last_result") or []):
+                tk.Label(lotto, text=f"{b:02d}", bg=GOLD, fg=DARK, font=("Consolas", 12, "bold"),
+                         width=3).grid(row=i + 1, column=j + 1, padx=2, pady=2)
+
     def render_calc(r):
         f = ttk.Frame(nb, padding=12)
         nb.add(f, text="计算")
@@ -270,27 +375,65 @@ def gui():
         meth.bind("<<ComboboxSelected>>", show_desc)
         show_desc()
 
-    def do_update():
+    busy = {"on": False, "last": None}
+
+    def do_update(silent=False):
+        if busy["on"]:
+            return
+        busy["on"] = True
+        busy["last"] = datetime.now()
         btn.state(["disabled"])
 
         def prog(i, n, c, d):
             root.after(0, lambda: (bar.config(maximum=n, value=i),
-                                   status.config(text=f"下载中 {i}/{n}  {c} {d}")))
+                                   status.config(text=f"检查新开奖 {i}/{n}  {c} {d}")))
+
+        def done(added, r):
+            now = datetime.now().strftime("%H:%M")
+            if r:
+                render(r)
+                status.config(text=status.cget("text") + f"   新增 {added} 期（{now}）")
+                nb.select(0)
+            else:
+                status.config(text=f"没有新开奖（检查于 {now}）")
 
         def work():
             try:
                 added, r = run_update(prog)
-                root.after(0, lambda: (render(r), status.config(
-                    text=status.cget("text") + f"   (新增 {added} 期)")))
+                root.after(0, lambda: done(added, r))
             except Exception as e:
-                root.after(0, lambda: messagebox.showerror("更新失败", str(e)))
+                if not silent:
+                    root.after(0, lambda: messagebox.showerror("更新失败", str(e)))
             finally:
+                busy["on"] = False
                 root.after(0, lambda: btn.state(["!disabled"]))
 
         threading.Thread(target=work, daemon=True).start()
 
+    def refresh_live():
+        def work():
+            changed, live = save_live()
+            if live:
+                state["live"] = live
+            if changed and state["r"]:
+                root.after(0, lambda: (render(state["r"]), nb.select(0)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def auto_tick():
+        """开奖时间（晚上 7-9 点）：每分钟看实时成绩，每 5 分钟完整更新一次。"""
+        now = datetime.now()
+        if auto.get() and 19 <= now.hour < 21:
+            refresh_live()
+            if busy["last"] is None or (now - busy["last"]).total_seconds() >= 300:
+                do_update(silent=True)
+        root.after(60_000, auto_tick)
+
     btn.config(command=do_update)
+    if LIVE_PATH.exists():
+        state["live"] = json.loads(LIVE_PATH.read_text("utf-8"))
     render(load_result())
+    refresh_live()
+    root.after(5_000, auto_tick)
     root.mainloop()
 
 

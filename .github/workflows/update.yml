@@ -1,9 +1,11 @@
-# 每天马来西亚时间晚上 9 点自动抓新开奖、重新计算，并发布网页 App 到 GitHub Pages
+# 开奖时间（马来西亚晚上 7-9 点）每 10 分钟抓最新成绩；有变化才重新计算并发布网页 App
 name: update-and-deploy
 
 on:
   schedule:
-    - cron: "0 13 * * *"   # 13:00 UTC = 21:00 MYT
+    - cron: "*/10 11-12 * * *"   # 11:00-12:50 UTC = 19:00-20:50 MYT，每 10 分钟
+    - cron: "0 13 * * *"         # 21:00 MYT 补一次
+    - cron: "0 1 * * *"          # 09:00 MYT 补 Toto 6/50·55·58 等较晚公布的资料
   workflow_dispatch:
   push:
     branches: [main]
@@ -31,20 +33,26 @@ jobs:
         with:
           python-version: "3.12"
       - name: 更新资料
+        id: upd
         env:
           TZ: Asia/Kuala_Lumpur
-        run: python python/app.py update
+        # 排程执行时没有新成绩就不重算；手动执行或改程序时一定重算
+        run: python python/app.py update ${{ github.event_name != 'schedule' && '--force' || '' }}
       - name: 保存资料
+        if: steps.upd.outputs.changed == 'true'
         continue-on-error: true   # 保存失败也继续发布 App
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add data/draws.json web/data.json
+          git add data/draws.json web/data.json web/live.json
           git diff --cached --quiet || git commit -m "自动更新开奖资料"
           git push
       - uses: actions/configure-pages@v5
+        if: steps.upd.outputs.changed == 'true'
       - uses: actions/upload-pages-artifact@v3
+        if: steps.upd.outputs.changed == 'true'
         with:
           path: web
       - id: deploy
+        if: steps.upd.outputs.changed == 'true'
         uses: actions/deploy-pages@v4

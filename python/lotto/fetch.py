@@ -107,7 +107,53 @@ def fetch_toto(d: date):
     return out or None
 
 
-FETCHERS = {"magnum": fetch_magnum, "damacai": fetch_damacai, "toto": fetch_toto}
+def complete(r):
+    """开奖进行中时结果是一个一个公布的，只有全部公布完才保存。"""
+    return (len(r.get("top3", [])) == 3 and len(r.get("special", [])) >= 10
+            and len(r.get("consolation", [])) == 10)
+
+
+# ---------------------------------------------------------------- 实时成绩 (4dmoon 首页用的 feed)
+LIVE_KEYS = {"magnum": "M", "damacai": "D", "toto": "T"}
+
+
+def fetch_live():
+    """最新一期（包括正在开奖中）的成绩: {company: {date, draw_no, live, top3, special, consolation}}"""
+    feed = json.loads(_get("https://www.4dmoon.com/feedwest.json"))
+    out = {}
+    for c, k in LIVE_KEYS.items():
+        r = feed.get(k) or {}
+        m = re.search(r"(\d{2}-[A-Za-z]{3}-\d{4})", r.get("DD", ""))
+        if not m:
+            continue
+        out[c] = {
+            "date": datetime.strptime(m.group(1), "%d-%b-%Y").date().isoformat(),
+            "draw_no": r.get("DN", "").lstrip("#"),
+            "live": r.get("LS", "0") != "0",
+            "top3": [r.get(f"P{i}", "") for i in (1, 2, 3)],
+            "special": _clean([r.get(f"S{i}") for i in range(1, 14)]),
+            "consolation": _clean([r.get(f"C{i}") for i in range(1, 11)]),
+        }
+    return out
+
+
+def _toto_with_live(d: date):
+    """4dmoon 的 past-results 通常隔一段时间才有当天资料，先用实时 feed 补上 4D。"""
+    r = fetch_toto(d)
+    if r and complete(r):
+        return r
+    try:
+        live = fetch_live().get("toto")
+    except Exception:
+        return r
+    if live and live["date"] == d.isoformat() and not live["live"]:
+        res = {k: live[k] for k in ("top3", "special", "consolation")}
+        res["top3"] = _clean(res["top3"])
+        return {**(r or {}), **res}
+    return r
+
+
+FETCHERS = {"magnum": fetch_magnum, "damacai": fetch_damacai, "toto": _toto_with_live}
 
 
 # ---------------------------------------------------------------- 增量更新
@@ -118,7 +164,11 @@ def update(db: dict, years=3, progress=None, workers=4):
     """
     today = date.today()
     start = today - timedelta(days=365 * years + 7)
-    dates = [d for d in draw_dates() if start <= d <= today]
+    dates = {d for d in draw_dates() if start <= d <= today}
+    # 开奖当晚 Da Ma Cai 的日期清单可能还没更新，先把今天(周三/六/日)加进去
+    if today.weekday() in (2, 5, 6):
+        dates.add(today)
+    dates = sorted(dates)
     for c in COMPANIES:
         db.setdefault(c, {})
         # 删除超出窗口的旧资料
@@ -126,6 +176,9 @@ def update(db: dict, years=3, progress=None, workers=4):
             del db[c][k]
 
     jobs = [(c, d) for d in dates for c in COMPANIES if d.isoformat() not in db[c]]
+    # Toto 4D 先从实时 feed 补上的那几期，3 天内再回头补 6/50·55·58
+    jobs += [("toto", d) for d in dates if (today - d).days <= 3
+             and db["toto"].get(d.isoformat()) and "t650" not in db["toto"][d.isoformat()]]
     done = added = 0
 
     def run(job):
@@ -138,9 +191,10 @@ def update(db: dict, years=3, progress=None, workers=4):
     with ThreadPoolExecutor(workers) as ex:
         for c, d, res in ex.map(run, jobs):
             done += 1
-            if isinstance(res, dict) and res.get("top3"):
-                db[c][d.isoformat()] = res
-                added += 1
+            if isinstance(res, dict) and complete(res):
+                is_new = d.isoformat() not in db[c] or res != db[c][d.isoformat()]
+                db[c][d.isoformat()] = {**db[c].get(d.isoformat(), {}), **res}
+                added += is_new
             elif res is None and (today - d).days > 3:
                 # 确认当日没有开奖，记下以免每次重抓
                 db[c][d.isoformat()] = {}
