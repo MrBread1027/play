@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"}
 COMPANIES = ("magnum", "damacai", "toto")
+YEARS = 10   # 统计最近几年的资料
 
 
 def _get(url, headers=None, retries=3):
@@ -60,7 +61,7 @@ def fetch_damacai(d: date):
     h = {"cookiesession": "299"}
     link = json.loads(_get(f"https://www.damacai.com.my/callpassresult?pastdate={d:%Y%m%d}", h))["link"]
     r = json.loads(_get(link))
-    if not r or r.get("status") != "COMPLETED":
+    if not r or r.get("status") not in ("COMPLETED", "C"):   # 旧资料用 "C"
         return None
     return {
         "top3": _clean([r["p1"], r["p2"], r["p3"]]),
@@ -157,7 +158,7 @@ FETCHERS = {"magnum": fetch_magnum, "damacai": fetch_damacai, "toto": _toto_with
 
 
 # ---------------------------------------------------------------- 增量更新
-def update(db: dict, years=3, progress=None, workers=4):
+def update(db: dict, years=YEARS, progress=None, workers=4):
     """把最近 `years` 年缺少的开奖补进 db，返回新增数量。
 
     db 结构: {"magnum": {"2025-09-03": {...}}, "damacai": {...}, "toto": {...}}

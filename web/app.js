@@ -45,7 +45,7 @@ function renderCompany(c) {
       <div>
         <div class="score"><span class="rank">#${i + 1}</span> 评分 <b>${p.score.toFixed(1)}</b>
           <span class="sub">（平均号码 = 50）</span></div>
-        <div class="odds">三年出现 ${p.count} 次 · 近半年 ${p.recent} 次 · 模式 ${esc(p.pattern)}</div>
+        <div class="odds">十年出现 ${p.count} 次 · 近半年 ${p.recent} 次 · 模式 ${esc(p.pattern)}</div>
         <div class="odds">任何奖 <b>${pct(o.any)}</b> · iBox(${o.perms}组) <b>${pct(o.ibox_any)}</b></div>
       </div>
       <details><summary>评分组成</summary>${bars}</details>

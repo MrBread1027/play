@@ -21,7 +21,7 @@ DB_PATH = ROOT / "data" / "draws.json"
 OUT_PATH = ROOT / "web" / "data.json"
 LIVE_PATH = ROOT / "web" / "live.json"
 
-DISCLAIMER = ("提醒：每期开奖都是独立随机的。推荐号码只是过去三年出现较多的号码，"
+DISCLAIMER = ("提醒：每期开奖都是独立随机的。推荐号码只是过去十年出现较多的号码，"
               "真实中奖概率由游戏规则决定，不会因为历史资料而提高。请理性投注。")
 
 
@@ -187,7 +187,7 @@ def gui():
         for t in nb.tabs():
             nb.forget(t)
         if not r:
-            status.config(text="还没有资料，请按「更新资料」（第一次约需 5-10 分钟）")
+            status.config(text="还没有资料，请按「更新资料」（第一次约需 30-40 分钟）")
             return
         status.config(text=f"最后更新: {r['updated'].replace('T', ' ')}")
         render_results(r)
@@ -205,7 +205,7 @@ def gui():
                       style="Muted.TLabel").pack(anchor="w")
             L = v["labels"]
             cols = ("num", "score", "count", "recent", "pat", "any", "ibox", "parts")
-            heads = ("推荐号码", "评分", "三年出现", "近半年", "模式", "任何奖概率", "iBox 任何奖",
+            heads = ("推荐号码", "评分", "十年出现", "近半年", "模式", "任何奖概率", "iBox 任何奖",
                      "评分组成（最大的三项）")
             widths = (80, 60, 70, 60, 60, 130, 150, 330)
             tv = ttk.Treeview(f, columns=cols, show="headings", height=len(v["picks"]))
